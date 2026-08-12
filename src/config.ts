@@ -21,8 +21,10 @@ export const FREE_POST_LIMIT = Number(optionalEnv('FREE_POST_LIMIT', '2'));
 /** Максимальная длина поста в символах. */
 export const MAX_POST_LENGTH = 900;
 
-/** Модель Gemini. */
-export const GEMINI_MODEL = optionalEnv('GEMINI_MODEL', 'gemini-2.5-flash');
+/** Модель Gemini. Убираем возможный префикс "models/" и лишние пробелы. */
+export const GEMINI_MODEL = optionalEnv('GEMINI_MODEL', 'gemini-2.5-flash')
+  .trim()
+  .replace(/^models\//i, '');
 
 /**
  * Правила стиля фитнес-канала. Отдаём агентам в системном промпте.
