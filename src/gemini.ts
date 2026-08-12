@@ -34,15 +34,18 @@ function isModelUnavailable(err: unknown): boolean {
   return anyErr?.status === 404 || /NOT_FOUND|no longer available|is not found/i.test(msg);
 }
 
-/** Временная перегрузка/лимит — стоит повторить запрос через паузу. */
-function isTransientOverload(err: unknown): boolean {
+/** Временная перегрузка модели (503) — стоит повторить/сменить модель. */
+function isOverloaded(err: unknown): boolean {
   const anyErr = err as { status?: number; message?: string };
   const msg = String(anyErr?.message ?? '');
-  return (
-    anyErr?.status === 503 ||
-    anyErr?.status === 429 ||
-    /UNAVAILABLE|high demand|overloaded|RESOURCE_EXHAUSTED/i.test(msg)
-  );
+  return anyErr?.status === 503 || /UNAVAILABLE|high demand|overloaded/i.test(msg);
+}
+
+/** Исчерпана квота/лимит (429) — общая на проект, перебирать модели бессмысленно. */
+function isRateLimited(err: unknown): boolean {
+  const anyErr = err as { status?: number; message?: string };
+  const msg = String(anyErr?.message ?? '');
+  return anyErr?.status === 429 || /RESOURCE_EXHAUSTED|exceeded your .*quota/i.test(msg);
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,13 +91,20 @@ async function generate(params: Omit<GenerateContentParameters, 'model'>) {
         return response;
       } catch (err) {
         lastErr = err;
-        if (isTransientOverload(err) && attempt < OVERLOAD_RETRIES) {
-          await sleep(800 * (attempt + 1)); // 0.8s, 1.6s
-          continue; // повтор той же модели
-        }
-        if (isModelUnavailable(err) || isTransientOverload(err)) {
+        // Квота исчерпана (429) — общая на проект, другие модели не спасут: сразу наружу.
+        if (isRateLimited(err)) {
           logGeminiError(`generate(model=${model})`, err);
-          break; // переходим к следующей модели
+          throw err;
+        }
+        // Временная перегрузка (503) — подождать и повторить ту же модель.
+        if (isOverloaded(err) && attempt < OVERLOAD_RETRIES) {
+          await sleep(800 * (attempt + 1)); // 0.8s, 1.6s
+          continue;
+        }
+        // Модель недоступна (404) или упорно перегружена — пробуем следующую.
+        if (isModelUnavailable(err) || isOverloaded(err)) {
+          logGeminiError(`generate(model=${model})`, err);
+          break;
         }
         throw err; // настоящая ошибка — не перебираем
       }

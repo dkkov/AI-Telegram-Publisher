@@ -34,7 +34,8 @@ export async function moderateTopic(topic: string): Promise<ModerationVerdict> {
     return await generateJson<ModerationVerdict>(prompt, schema, { system: CHANNEL_STYLE });
   } catch (err) {
     console.error('moderateTopic failed:', err);
-    // При сбое модерации — безопасный дефолт: не пропускаем.
-    return { allowed: false, reason: 'Не удалось проверить тему, попробуй переформулировать.' };
+    // При сбое (например, лимит Gemini) не блокируем пользователя — пропускаем тему.
+    // Настоящую фильтрацию модерация делает, когда Gemini доступен.
+    return { allowed: true, reason: '' };
   }
 }

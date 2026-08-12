@@ -1,6 +1,4 @@
 // Оркестратор (Orchestrator / Router): гоняет цепочку суб-агентов и шлёт пользователю статусы.
-import { Type, type Schema } from '@google/genai';
-import { generateJson } from './gemini.js';
 import { sendMessage, sendPhoto, sendChatAction } from './telegram.js';
 import { getPostCount, incrementPostCount, getMemory, saveMemory } from './redis.js';
 import { FREE_POST_LIMIT, WELCOME_MESSAGE, LIMIT_MESSAGE } from './config.js';
@@ -11,37 +9,24 @@ import { findCover } from './agents/coverArtist.js';
 import { judgePost } from './agents/judge.js';
 import type { TelegramMessage, MemoryState, MessageIntent, DraftPost, Cover } from './types.js';
 
-const intentSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    intent: { type: Type.STRING, enum: ['new_topic', 'edit'] },
-  },
-  required: ['intent'],
-};
+// Слова-признаки правки (экономим запрос к Gemini — определяем эвристикой).
+const EDIT_HINTS = [
+  'короче', 'длиннее', 'подробн', 'добавь', 'убери', 'удали', 'проще', 'сложнее',
+  'перепиши', 'переделай', 'измени', 'поменяй', 'замени', 'сократи', 'расширь',
+  'дополни', 'смешн', 'серьёзн', 'серьезн', 'больше эмодзи', 'меньше эмодзи',
+  'без хэштег', 'хэштег', 'сделай', 'ещё раз', 'еще раз',
+];
 
 /**
  * Если у пользователя уже есть пост в памяти, определяем: это правка к нему
- * или новая тема. Без памяти — всегда новая тема.
+ * или новая тема. Короткое сообщение со словом-признаком правки → правка.
+ * Без памяти — всегда новая тема.
  */
-async function classifyIntent(text: string, hasMemory: boolean): Promise<MessageIntent> {
+function classifyIntent(text: string, hasMemory: boolean): MessageIntent {
   if (!hasMemory) return 'new_topic';
-  try {
-    const { intent } = await generateJson<{ intent: MessageIntent }>(
-      [
-        'У пользователя уже есть недавно сгенерированный пост.',
-        'Определи, его новое сообщение — это ПРАВКА к прошлому посту',
-        '(например: «короче», «добавь пример», «сделай проще», «больше эмодзи», «перепиши»)',
-        'или НОВАЯ ТЕМА для отдельного поста. Верни JSON с полем intent.',
-        '',
-        `Сообщение: "${text}"`,
-      ].join('\n'),
-      intentSchema,
-    );
-    return intent === 'edit' ? 'edit' : 'new_topic';
-  } catch (err) {
-    console.error('classifyIntent failed:', err);
-    return 'new_topic';
-  }
+  const lower = text.toLowerCase();
+  const looksLikeEdit = text.length <= 60 && EDIT_HINTS.some((h) => lower.includes(h));
+  return looksLikeEdit ? 'edit' : 'new_topic';
 }
 
 /** Собирает финальную подпись: текст поста + кредит фотографу. */
@@ -156,7 +141,7 @@ export async function handleMessage(message: TelegramMessage): Promise<void> {
 
   try {
     const memory = await getMemory(userId);
-    const intent = await classifyIntent(text, memory !== null);
+    const intent = classifyIntent(text, memory !== null);
 
     if (intent === 'edit' && memory) {
       await handleEdit(chatId, userId, memory, text);
