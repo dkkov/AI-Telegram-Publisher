@@ -11,6 +11,21 @@ function ai(): GoogleGenAI {
   return client;
 }
 
+/** Печатает в лог понятную причину сбоя Gemini (имя модели + полный текст ошибки). */
+function logGeminiError(where: string, err: unknown): void {
+  let details = '';
+  if (err instanceof Error) {
+    details = err.message;
+  } else {
+    try {
+      details = JSON.stringify(err);
+    } catch {
+      details = String(err);
+    }
+  }
+  console.error(`Gemini error in ${where} | model="${GEMINI_MODEL}" | ${details}`);
+}
+
 export interface GroundedText {
   text: string;
   sources: string[];
@@ -24,15 +39,21 @@ export async function generateText(
   prompt: string,
   opts: { system?: string; grounded?: boolean; temperature?: number } = {},
 ): Promise<GroundedText> {
-  const response = await ai().models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      systemInstruction: opts.system,
-      temperature: opts.temperature ?? 0.8,
-      ...(opts.grounded ? { tools: [{ googleSearch: {} }] } : {}),
-    },
-  });
+  let response;
+  try {
+    response = await ai().models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        systemInstruction: opts.system,
+        temperature: opts.temperature ?? 0.8,
+        ...(opts.grounded ? { tools: [{ googleSearch: {} }] } : {}),
+      },
+    });
+  } catch (err) {
+    logGeminiError('generateText', err);
+    throw err;
+  }
 
   const text = response.text ?? '';
   const sources: string[] = [];
@@ -56,16 +77,22 @@ export async function generateJson<T>(
   schema: Schema,
   opts: { system?: string; temperature?: number } = {},
 ): Promise<T> {
-  const response = await ai().models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      systemInstruction: opts.system,
-      temperature: opts.temperature ?? 0.2,
-      responseMimeType: 'application/json',
-      responseSchema: schema,
-    },
-  });
+  let response;
+  try {
+    response = await ai().models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        systemInstruction: opts.system,
+        temperature: opts.temperature ?? 0.2,
+        responseMimeType: 'application/json',
+        responseSchema: schema,
+      },
+    });
+  } catch (err) {
+    logGeminiError('generateJson', err);
+    throw err;
+  }
   const raw = response.text ?? '{}';
   return JSON.parse(raw) as T;
 }
