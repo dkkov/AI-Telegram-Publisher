@@ -1,0 +1,24 @@
+{
+  "name": "ai-telegram-fitness-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Telegram bot that researches a topic and writes a fitness-channel post with a cover photo",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^1.9.0",
+    "@upstash/redis": "^1.34.3",
+    "@vercel/functions": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@vercel/node": "^5.1.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
