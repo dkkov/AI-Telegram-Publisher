@@ -27,12 +27,25 @@ function candidateModels(): string[] {
 
 let workingModel: string | null = null;
 
-/** Похоже ли на ошибку «модель не найдена / недоступна» (можно пробовать другую). */
+/** Похоже ли на ошибку «модель не найдена / недоступна» (стоит пробовать другую). */
 function isModelUnavailable(err: unknown): boolean {
   const anyErr = err as { status?: number; message?: string };
   const msg = String(anyErr?.message ?? '');
   return anyErr?.status === 404 || /NOT_FOUND|no longer available|is not found/i.test(msg);
 }
+
+/** Временная перегрузка/лимит — стоит повторить запрос через паузу. */
+function isTransientOverload(err: unknown): boolean {
+  const anyErr = err as { status?: number; message?: string };
+  const msg = String(anyErr?.message ?? '');
+  return (
+    anyErr?.status === 503 ||
+    anyErr?.status === 429 ||
+    /UNAVAILABLE|high demand|overloaded|RESOURCE_EXHAUSTED/i.test(msg)
+  );
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Печатает в лог понятную причину сбоя Gemini. */
 function logGeminiError(where: string, err: unknown): void {
@@ -48,26 +61,43 @@ function logGeminiError(where: string, err: unknown): void {
   console.error(`Gemini error in ${where} | status=${anyErr?.status ?? '?'} | ${details.replace(/\s+/g, ' ')}`);
 }
 
+// Сколько раз повторять при временной перегрузке (503/429) одной модели.
+const OVERLOAD_RETRIES = 2;
+
 /**
- * Вызывает generateContent, перебирая модели-кандидаты, пока одна не сработает.
- * Настоящие ошибки (неверный ключ, лимит) не перебираем — сразу пробрасываем.
+ * Вызывает generateContent надёжно:
+ * - при временной перегрузке (503/429) повторяет запрос через короткую паузу;
+ * - если модель недоступна (404) или упорно перегружена — пробует следующую из списка;
+ * - настоящие ошибки (неверный ключ и т.п.) сразу пробрасывает.
+ * Первую сработавшую модель запоминает и дальше ходит сразу в неё.
  */
 async function generate(params: Omit<GenerateContentParameters, 'model'>) {
-  const models = workingModel ? [workingModel] : candidateModels();
+  const ordered = workingModel
+    ? [workingModel, ...candidateModels().filter((m) => m !== workingModel)]
+    : candidateModels();
+
   let lastErr: unknown;
-  for (const model of models) {
-    try {
-      const response = await ai().models.generateContent({ model, ...params });
-      if (workingModel !== model) {
-        workingModel = model;
-        console.log(`Gemini: используется модель "${model}"`);
+  for (const model of ordered) {
+    for (let attempt = 0; attempt <= OVERLOAD_RETRIES; attempt++) {
+      try {
+        const response = await ai().models.generateContent({ model, ...params });
+        if (workingModel !== model) {
+          workingModel = model;
+          console.log(`Gemini: используется модель "${model}"`);
+        }
+        return response;
+      } catch (err) {
+        lastErr = err;
+        if (isTransientOverload(err) && attempt < OVERLOAD_RETRIES) {
+          await sleep(800 * (attempt + 1)); // 0.8s, 1.6s
+          continue; // повтор той же модели
+        }
+        if (isModelUnavailable(err) || isTransientOverload(err)) {
+          logGeminiError(`generate(model=${model})`, err);
+          break; // переходим к следующей модели
+        }
+        throw err; // настоящая ошибка — не перебираем
       }
-      return response;
-    } catch (err) {
-      lastErr = err;
-      if (!isModelUnavailable(err)) throw err;
-      logGeminiError(`generate(model=${model})`, err);
-      // модель недоступна — пробуем следующую
     }
   }
   throw lastErr;
