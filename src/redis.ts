@@ -4,10 +4,41 @@ import type { MemoryState } from './types.js';
 
 let redis: Redis | null = null;
 
-// Читает UPSTASH_REDIS_REST_URL и UPSTASH_REDIS_REST_TOKEN из окружения.
+/**
+ * Ищет REST-креды Upstash в переменных окружения.
+ * Сначала пробует канонические UPSTASH_REDIS_REST_URL/TOKEN, а если их нет —
+ * находит по суффиксу имени (Vercel Marketplace создаёт их с префиксом,
+ * например STORAGE_KV_REST_API_URL / KV_REST_API_TOKEN).
+ */
+function resolveRedisCreds(): { url: string; token: string } {
+  const env = process.env;
+  if (env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN) {
+    return { url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN };
+  }
+
+  const entries = Object.entries(env).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0,
+  );
+  const findBySuffix = (suffixes: string[], exclude: string[] = []): string | undefined =>
+    entries.find(
+      ([key]) =>
+        suffixes.some((s) => key.toUpperCase().endsWith(s)) &&
+        !exclude.some((e) => key.toUpperCase().includes(e)),
+    )?.[1];
+
+  const url = findBySuffix(['REST_API_URL', 'REST_URL']);
+  const token = findBySuffix(['REST_API_TOKEN', 'REST_TOKEN'], ['READ_ONLY']);
+  if (url && token) return { url, token };
+
+  throw new Error(
+    'Не найдены переменные Upstash Redis (URL/TOKEN). ' +
+      'Проверь, что база подключена в Vercel → Storage, и сделай Redeploy.',
+  );
+}
+
 function db(): Redis {
   if (!redis) {
-    redis = Redis.fromEnv();
+    redis = new Redis(resolveRedisCreds());
   }
   return redis;
 }
