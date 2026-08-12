@@ -1,5 +1,5 @@
 // Обёртка над Gemini API (@google/genai): текст, живой поиск и JSON-ответы.
-import { GoogleGenAI, type Schema } from '@google/genai';
+import { GoogleGenAI, type GenerateContentParameters, type Schema } from '@google/genai';
 import { GEMINI_MODEL, requireEnv } from './config.js';
 
 let client: GoogleGenAI | null = null;
@@ -11,19 +11,66 @@ function ai(): GoogleGenAI {
   return client;
 }
 
-/** Печатает в лог понятную причину сбоя Gemini (имя модели + полный текст ошибки). */
+// Порядок кандидатов: сначала выбранная модель, затем актуальные запасные.
+// Нужен, потому что Google отключает старые модели для новых ключей (ошибка 404
+// «no longer available to new users»). Первую рабочую запоминаем и дальше юзаем её.
+const FALLBACK_MODELS = [
+  'gemini-flash-latest',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-flash-lite-latest',
+];
+
+function candidateModels(): string[] {
+  return [...new Set([GEMINI_MODEL, ...FALLBACK_MODELS])];
+}
+
+let workingModel: string | null = null;
+
+/** Похоже ли на ошибку «модель не найдена / недоступна» (можно пробовать другую). */
+function isModelUnavailable(err: unknown): boolean {
+  const anyErr = err as { status?: number; message?: string };
+  const msg = String(anyErr?.message ?? '');
+  return anyErr?.status === 404 || /NOT_FOUND|no longer available|is not found/i.test(msg);
+}
+
+/** Печатает в лог понятную причину сбоя Gemini. */
 function logGeminiError(where: string, err: unknown): void {
-  let details = '';
-  if (err instanceof Error) {
-    details = err.message;
-  } else {
+  const anyErr = err as { status?: number; message?: string };
+  let details = typeof anyErr?.message === 'string' ? anyErr.message : '';
+  if (!details) {
     try {
       details = JSON.stringify(err);
     } catch {
       details = String(err);
     }
   }
-  console.error(`Gemini error in ${where} | model="${GEMINI_MODEL}" | ${details}`);
+  console.error(`Gemini error in ${where} | status=${anyErr?.status ?? '?'} | ${details.replace(/\s+/g, ' ')}`);
+}
+
+/**
+ * Вызывает generateContent, перебирая модели-кандидаты, пока одна не сработает.
+ * Настоящие ошибки (неверный ключ, лимит) не перебираем — сразу пробрасываем.
+ */
+async function generate(params: Omit<GenerateContentParameters, 'model'>) {
+  const models = workingModel ? [workingModel] : candidateModels();
+  let lastErr: unknown;
+  for (const model of models) {
+    try {
+      const response = await ai().models.generateContent({ model, ...params });
+      if (workingModel !== model) {
+        workingModel = model;
+        console.log(`Gemini: используется модель "${model}"`);
+      }
+      return response;
+    } catch (err) {
+      lastErr = err;
+      if (!isModelUnavailable(err)) throw err;
+      logGeminiError(`generate(model=${model})`, err);
+      // модель недоступна — пробуем следующую
+    }
+  }
+  throw lastErr;
 }
 
 export interface GroundedText {
@@ -39,21 +86,14 @@ export async function generateText(
   prompt: string,
   opts: { system?: string; grounded?: boolean; temperature?: number } = {},
 ): Promise<GroundedText> {
-  let response;
-  try {
-    response = await ai().models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: opts.system,
-        temperature: opts.temperature ?? 0.8,
-        ...(opts.grounded ? { tools: [{ googleSearch: {} }] } : {}),
-      },
-    });
-  } catch (err) {
-    logGeminiError('generateText', err);
-    throw err;
-  }
+  const response = await generate({
+    contents: prompt,
+    config: {
+      systemInstruction: opts.system,
+      temperature: opts.temperature ?? 0.8,
+      ...(opts.grounded ? { tools: [{ googleSearch: {} }] } : {}),
+    },
+  });
 
   const text = response.text ?? '';
   const sources: string[] = [];
@@ -77,22 +117,15 @@ export async function generateJson<T>(
   schema: Schema,
   opts: { system?: string; temperature?: number } = {},
 ): Promise<T> {
-  let response;
-  try {
-    response = await ai().models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: opts.system,
-        temperature: opts.temperature ?? 0.2,
-        responseMimeType: 'application/json',
-        responseSchema: schema,
-      },
-    });
-  } catch (err) {
-    logGeminiError('generateJson', err);
-    throw err;
-  }
+  const response = await generate({
+    contents: prompt,
+    config: {
+      systemInstruction: opts.system,
+      temperature: opts.temperature ?? 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: schema,
+    },
+  });
   const raw = response.text ?? '{}';
   return JSON.parse(raw) as T;
 }

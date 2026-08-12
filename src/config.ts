@@ -22,7 +22,7 @@ export const FREE_POST_LIMIT = Number(optionalEnv('FREE_POST_LIMIT', '2'));
 export const MAX_POST_LENGTH = 900;
 
 /** Модель Gemini. Убираем возможный префикс "models/" и лишние пробелы. */
-export const GEMINI_MODEL = optionalEnv('GEMINI_MODEL', 'gemini-2.5-flash')
+export const GEMINI_MODEL = optionalEnv('GEMINI_MODEL', 'gemini-flash-latest')
   .trim()
   .replace(/^models\//i, '');
 
