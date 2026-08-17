@@ -1,4 +1,4 @@
-// Агент-модератор (Moderation / Guardrails): проверяет входящую тему до запуска цепочки.
+// Moderator agent (Moderation / Guardrails): checks the incoming topic before the chain runs.
 import { Type, type Schema } from '@google/genai';
 import { generateJson } from '../gemini.js';
 import { CHANNEL_STYLE } from '../config.js';
@@ -14,28 +14,28 @@ const schema: Schema = {
 };
 
 /**
- * Пропускаем нормальные темы про фитнес/ЗОЖ/питание/мотивацию и общечеловеческие темы,
- * которые можно раскрыть безопасно. Отклоняем опасное и запретное.
+ * Allows normal fitness/wellness/nutrition/motivation topics and general topics
+ * that can be covered safely. Rejects dangerous and forbidden ones.
  */
 export async function moderateTopic(topic: string): Promise<ModerationVerdict> {
   const prompt = [
-    'Оцени тему для поста в фитнес-канал. Верни JSON.',
-    'Разреши (allowed=true) обычные, безопасные темы: тренировки, питание, сон,',
-    'мотивация, привычки, восстановление, общий образ жизни.',
-    'Отклони (allowed=false), если тема про: рецептурные препараты и дозировки,',
-    'анаболические стероиды, экстремальные голодания, «лечение» болезней и диагнозы,',
-    'опасные челленджи, вред себе, ненависть, откровенный/незаконный контент, спам-бессмыслицу.',
-    'В reason коротко (1 предложение, по-русски) объясни решение.',
+    'Evaluate a topic for a fitness channel post. Return JSON.',
+    'Allow (allowed=true) normal, safe topics: workouts, nutrition, sleep,',
+    'motivation, habits, recovery, general lifestyle.',
+    'Reject (allowed=false) if the topic is about: prescription drugs and dosages,',
+    'anabolic steroids, extreme fasting, diagnosing or "curing" diseases,',
+    'dangerous challenges, self-harm, hate, explicit/illegal content, or spam nonsense.',
+    'In "reason", briefly explain the decision in one English sentence.',
     '',
-    `Тема пользователя: "${topic}"`,
+    `User topic: "${topic}"`,
   ].join('\n');
 
   try {
     return await generateJson<ModerationVerdict>(prompt, schema, { system: CHANNEL_STYLE });
   } catch (err) {
     console.error('moderateTopic failed:', err);
-    // При сбое (например, лимит Gemini) не блокируем пользователя — пропускаем тему.
-    // Настоящую фильтрацию модерация делает, когда Gemini доступен.
+    // On failure (e.g. Gemini quota) do not block the user — let the topic through.
+    // Real filtering happens whenever Gemini is available.
     return { allowed: true, reason: '' };
   }
 }

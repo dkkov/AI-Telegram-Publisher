@@ -1,4 +1,4 @@
-// Оркестратор (Orchestrator / Router): гоняет цепочку суб-агентов и шлёт пользователю статусы.
+// Orchestrator / Router: runs the sub-agent chain and sends status updates to the user.
 import { sendMessage, sendPhoto, sendChatAction } from './telegram.js';
 import { getPostCount, incrementPostCount, getMemory, saveMemory } from './redis.js';
 import { FREE_POST_LIMIT, WELCOME_MESSAGE, LIMIT_MESSAGE } from './config.js';
@@ -9,18 +9,19 @@ import { findCover } from './agents/coverArtist.js';
 import { judgePost } from './agents/judge.js';
 import type { TelegramMessage, MemoryState, MessageIntent, DraftPost, Cover } from './types.js';
 
-// Слова-признаки правки (экономим запрос к Gemini — определяем эвристикой).
+// Edit-intent hints (saves a Gemini call — we classify with a simple heuristic).
 const EDIT_HINTS = [
-  'короче', 'длиннее', 'подробн', 'добавь', 'убери', 'удали', 'проще', 'сложнее',
-  'перепиши', 'переделай', 'измени', 'поменяй', 'замени', 'сократи', 'расширь',
-  'дополни', 'смешн', 'серьёзн', 'серьезн', 'больше эмодзи', 'меньше эмодзи',
-  'без хэштег', 'хэштег', 'сделай', 'ещё раз', 'еще раз',
+  'shorter', 'longer', 'simpler', 'simplify', 'rewrite', 'reword', 'funnier',
+  'punchier', 'more emoji', 'fewer emoji', 'less emoji', 'more serious',
+  'more detail', 'add an example', 'add example', 'add more', 'make it',
+  'expand', 'shorten', 'condense', 'tighten', 'another photo', 'different photo',
+  'change the photo', 'without hashtags', 'redo', 'try again', 'again',
 ];
 
 /**
- * Если у пользователя уже есть пост в памяти, определяем: это правка к нему
- * или новая тема. Короткое сообщение со словом-признаком правки → правка.
- * Без памяти — всегда новая тема.
+ * If the user already has a post in memory, decide whether the new message is an
+ * edit to it or a brand-new topic. A short message containing an edit hint → edit.
+ * Without memory it is always a new topic.
  */
 function classifyIntent(text: string, hasMemory: boolean): MessageIntent {
   if (!hasMemory) return 'new_topic';
@@ -29,63 +30,63 @@ function classifyIntent(text: string, hasMemory: boolean): MessageIntent {
   return looksLikeEdit ? 'edit' : 'new_topic';
 }
 
-/** Собирает финальную подпись: текст поста + кредит фотографу. */
+/** Builds the final caption: post text + photographer credit. */
 function buildCaption(post: string, cover: Cover | null): string {
   if (!cover) return post;
-  return `${post}\n\n📷 Фото: ${cover.photographer} / Pexels`;
+  return `${post}\n\n📷 Photo: ${cover.photographer} / Pexels`;
 }
 
-/** Отправляет пост пользователю: с обложкой, если она есть. */
+/** Delivers the post to the user, with a cover photo when available. */
 async function deliver(chatId: number, post: string, cover: Cover | null): Promise<void> {
   const caption = buildCaption(post, cover);
   if (cover && caption.length <= 1024) {
     await sendPhoto(chatId, cover.imageUrl, caption);
   } else if (cover) {
-    // Слишком длинно для подписи — шлём фото и текст отдельно.
-    await sendPhoto(chatId, cover.imageUrl, `📷 Фото: ${cover.photographer} / Pexels`);
+    // Too long for a caption — send the photo and the text separately.
+    await sendPhoto(chatId, cover.imageUrl, `📷 Photo: ${cover.photographer} / Pexels`);
     await sendMessage(chatId, post);
   } else {
     await sendMessage(chatId, post);
   }
 }
 
-/** Полная цепочка для новой темы. */
+/** Full chain for a new topic. */
 async function handleNewTopic(chatId: number, userId: number, topic: string): Promise<void> {
-  // 1. Лимит бесплатных постов (Rate limiting).
+  // 1. Free post limit (rate limiting).
   const count = await getPostCount(userId);
   if (count >= FREE_POST_LIMIT) {
     await sendMessage(chatId, LIMIT_MESSAGE);
     return;
   }
 
-  // 2. Модерация темы (Guardrails).
+  // 2. Topic moderation (guardrails).
   const verdict = await moderateTopic(topic);
   if (!verdict.allowed) {
-    await sendMessage(chatId, `🚫 Не могу написать пост на эту тему.\n${verdict.reason}`);
+    await sendMessage(chatId, `🚫 I can't write a post on this topic.\n${verdict.reason}`);
     return;
   }
 
-  // 3. Ресёрч живым поиском.
+  // 3. Research with live search.
   await sendChatAction(chatId, 'typing');
-  await sendMessage(chatId, '🔎 Ищу свежие факты по теме…');
+  await sendMessage(chatId, '🔎 Researching fresh facts on your topic…');
   const { facts } = await research(topic);
 
-  // 4. Копирайтер пишет пост.
+  // 4. Copywriter writes the post.
   await sendChatAction(chatId, 'typing');
-  await sendMessage(chatId, '✍️ Пишу пост в стиле канала…');
+  await sendMessage(chatId, '✍️ Writing the post in the channel style…');
   let draft: DraftPost = await writePost(topic, facts);
 
-  // 5. Judge проверяет; при провале — один повтор.
+  // 5. Judge reviews it; on failure, one retry.
   const review = await judgePost(topic, draft.text);
   if (!review.approved) {
     draft = await improvePost(topic, facts, draft.text, review.suggestions);
   }
 
-  // 6. Обложка с Pexels.
+  // 6. Cover photo from Pexels.
   await sendChatAction(chatId, 'upload_photo');
   const cover = await findCover(draft.imageKeywords);
 
-  // 7. Учитываем лимит и сохраняем память для правок.
+  // 7. Count the post against the limit and save memory for future edits.
   await incrementPostCount(userId);
   const memory: MemoryState = {
     topic,
@@ -97,18 +98,18 @@ async function handleNewTopic(chatId: number, userId: number, topic: string): Pr
   };
   await saveMemory(userId, memory);
 
-  // 8. Отправляем результат.
+  // 8. Deliver the result.
   await deliver(chatId, draft.text, cover);
 }
 
-/** Применение правки к последнему посту (Memory). Лимит не тратится. */
+/** Applies an edit to the last post (Memory). Does not consume the limit. */
 async function handleEdit(chatId: number, userId: number, memory: MemoryState, instruction: string): Promise<void> {
   await sendChatAction(chatId, 'typing');
-  await sendMessage(chatId, '🔁 Вношу правку…');
+  await sendMessage(chatId, '🔁 Applying your edit…');
 
   const draft = await revisePost(memory, instruction);
 
-  // Если ключевые слова заметно изменились — ищем новую обложку, иначе переиспользуем.
+  // If the keywords changed noticeably, fetch a new cover; otherwise reuse it.
   let cover = memory.cover;
   if (draft.imageKeywords && draft.imageKeywords !== memory.imageKeywords) {
     cover = (await findCover(draft.imageKeywords)) ?? memory.cover;
@@ -125,13 +126,13 @@ async function handleEdit(chatId: number, userId: number, memory: MemoryState, i
   await deliver(chatId, draft.text, cover);
 }
 
-/** Точка входа обработки одного сообщения. Вызывается из webhook в фоне. */
+/** Entry point for handling one message. Called from the webhook in the background. */
 export async function handleMessage(message: TelegramMessage): Promise<void> {
   const chatId = message.chat.id;
   const userId = message.from?.id;
   const text = message.text?.trim();
 
-  // Обрабатываем только личку и только текст.
+  // Only handle private chats and text messages.
   if (!userId || !text || message.chat.type !== 'private') return;
 
   if (text === '/start' || text === '/help') {
@@ -150,6 +151,6 @@ export async function handleMessage(message: TelegramMessage): Promise<void> {
     }
   } catch (err) {
     console.error('handleMessage failed:', err);
-    await sendMessage(chatId, '😔 Что-то пошло не так при генерации. Попробуй ещё раз чуть позже.');
+    await sendMessage(chatId, '😔 Something went wrong while generating. Please try again in a moment.');
   }
 }

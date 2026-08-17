@@ -1,4 +1,4 @@
-// Обёртка над Gemini API (@google/genai): текст, живой поиск и JSON-ответы.
+// Gemini API wrapper (@google/genai): text, live search and JSON responses.
 import { GoogleGenAI, type GenerateContentParameters, type Schema } from '@google/genai';
 import { GEMINI_MODEL, requireEnv } from './config.js';
 
@@ -11,9 +11,9 @@ function ai(): GoogleGenAI {
   return client;
 }
 
-// Порядок кандидатов: сначала выбранная модель, затем актуальные запасные.
-// Нужен, потому что Google отключает старые модели для новых ключей (ошибка 404
-// «no longer available to new users»). Первую рабочую запоминаем и дальше юзаем её.
+// Candidate order: the chosen model first, then current fallbacks.
+// Needed because Google disables old models for new keys (404 "no longer available
+// to new users"). We remember the first working model and reuse it afterwards.
 const FALLBACK_MODELS = [
   'gemini-flash-latest',
   'gemini-2.5-flash',
@@ -27,21 +27,21 @@ function candidateModels(): string[] {
 
 let workingModel: string | null = null;
 
-/** Похоже ли на ошибку «модель не найдена / недоступна» (стоит пробовать другую). */
+/** Looks like a "model not found / unavailable" error (worth trying another). */
 function isModelUnavailable(err: unknown): boolean {
   const anyErr = err as { status?: number; message?: string };
   const msg = String(anyErr?.message ?? '');
   return anyErr?.status === 404 || /NOT_FOUND|no longer available|is not found/i.test(msg);
 }
 
-/** Временная перегрузка модели (503) — стоит повторить/сменить модель. */
+/** Temporary model overload (503) — worth retrying / switching models. */
 function isOverloaded(err: unknown): boolean {
   const anyErr = err as { status?: number; message?: string };
   const msg = String(anyErr?.message ?? '');
   return anyErr?.status === 503 || /UNAVAILABLE|high demand|overloaded/i.test(msg);
 }
 
-/** Исчерпана квота/лимит (429) — общая на проект, перебирать модели бессмысленно. */
+/** Quota/limit exhausted (429) — shared per project, so switching models won't help. */
 function isRateLimited(err: unknown): boolean {
   const anyErr = err as { status?: number; message?: string };
   const msg = String(anyErr?.message ?? '');
@@ -50,7 +50,7 @@ function isRateLimited(err: unknown): boolean {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Печатает в лог понятную причину сбоя Gemini. */
+/** Logs a readable reason for a Gemini failure. */
 function logGeminiError(where: string, err: unknown): void {
   const anyErr = err as { status?: number; message?: string };
   let details = typeof anyErr?.message === 'string' ? anyErr.message : '';
@@ -64,15 +64,15 @@ function logGeminiError(where: string, err: unknown): void {
   console.error(`Gemini error in ${where} | status=${anyErr?.status ?? '?'} | ${details.replace(/\s+/g, ' ')}`);
 }
 
-// Сколько раз повторять при временной перегрузке (503/429) одной модели.
+// How many times to retry one model on a temporary overload (503).
 const OVERLOAD_RETRIES = 2;
 
 /**
- * Вызывает generateContent надёжно:
- * - при временной перегрузке (503/429) повторяет запрос через короткую паузу;
- * - если модель недоступна (404) или упорно перегружена — пробует следующую из списка;
- * - настоящие ошибки (неверный ключ и т.п.) сразу пробрасывает.
- * Первую сработавшую модель запоминает и дальше ходит сразу в неё.
+ * Calls generateContent robustly:
+ * - on temporary overload (503) retries the same model after a short pause;
+ * - if a model is unavailable (404) or keeps overloading, tries the next candidate;
+ * - real errors (bad key, quota, etc.) are thrown immediately.
+ * The first model that works is cached and used directly next time.
  */
 async function generate(params: Omit<GenerateContentParameters, 'model'>) {
   const ordered = workingModel
@@ -86,27 +86,27 @@ async function generate(params: Omit<GenerateContentParameters, 'model'>) {
         const response = await ai().models.generateContent({ model, ...params });
         if (workingModel !== model) {
           workingModel = model;
-          console.log(`Gemini: используется модель "${model}"`);
+          console.log(`Gemini: using model "${model}"`);
         }
         return response;
       } catch (err) {
         lastErr = err;
-        // Квота исчерпана (429) — общая на проект, другие модели не спасут: сразу наружу.
+        // Quota exhausted (429) — shared per project, other models won't help: throw.
         if (isRateLimited(err)) {
           logGeminiError(`generate(model=${model})`, err);
           throw err;
         }
-        // Временная перегрузка (503) — подождать и повторить ту же модель.
+        // Temporary overload (503) — wait and retry the same model.
         if (isOverloaded(err) && attempt < OVERLOAD_RETRIES) {
           await sleep(800 * (attempt + 1)); // 0.8s, 1.6s
           continue;
         }
-        // Модель недоступна (404) или упорно перегружена — пробуем следующую.
+        // Model unavailable (404) or persistently overloaded — try the next one.
         if (isModelUnavailable(err) || isOverloaded(err)) {
           logGeminiError(`generate(model=${model})`, err);
           break;
         }
-        throw err; // настоящая ошибка — не перебираем
+        throw err; // real error — do not iterate
       }
     }
   }
@@ -119,8 +119,8 @@ export interface GroundedText {
 }
 
 /**
- * Обычная генерация текста. Если grounded=true — включаем Google Search grounding
- * (живой поиск) и возвращаем список источников.
+ * Plain text generation. When grounded=true, enables Google Search grounding
+ * (live search) and returns the list of sources.
  */
 export async function generateText(
   prompt: string,
@@ -149,8 +149,8 @@ export async function generateText(
 }
 
 /**
- * Генерация строго структурированного JSON по схеме.
- * Используется модератором и judge (grounding здесь не нужен).
+ * Strict structured JSON generation against a schema.
+ * Used by the moderator and judge (grounding is not needed here).
  */
 export async function generateJson<T>(
   prompt: string,

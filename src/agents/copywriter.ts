@@ -1,4 +1,4 @@
-// Агент-копирайтер (Copywriter): пишет пост по фактам в стиле канала и применяет правки.
+// Copywriter agent: writes the post from facts in the channel style and applies edits.
 import { Type, type Schema } from '@google/genai';
 import { generateJson } from '../gemini.js';
 import { CHANNEL_STYLE, MAX_POST_LENGTH } from '../config.js';
@@ -9,34 +9,34 @@ const schema: Schema = {
   properties: {
     text: {
       type: Type.STRING,
-      description: 'Готовый пост: хук, тело, призыв и 3–5 хэштегов. Обычный текст, без markdown-заголовков.',
+      description: 'The finished post: hook, body, call to action and 3–5 hashtags. Plain text, no markdown headings.',
     },
     imageKeywords: {
       type: Type.STRING,
-      description: 'Короткий запрос на английском (2–4 слова) для поиска фото обложки на фотостоке.',
+      description: 'A short English query (2–4 words) to search for a cover photo on a stock service.',
     },
   },
   required: ['text', 'imageKeywords'],
 };
 
-/** Написать новый пост по теме и собранным фактам. */
+/** Write a new post from the topic and gathered facts. */
 export async function writePost(topic: string, facts: string): Promise<DraftPost> {
   const prompt = [
-    `Тема поста: "${topic}".`,
+    `Post topic: "${topic}".`,
     '',
-    'Факты из ресёрча (опирайся на них, не выдумывай):',
+    'Research facts (rely on these, do not invent):',
     facts,
     '',
-    `Напиши пост для Telegram (до ${MAX_POST_LENGTH} символов) строго по правилам стиля канала.`,
-    'Структура: цепляющий хук → тело с пользой → призыв к действию → 3–5 хэштегов.',
-    'Также предложи imageKeywords — короткий запрос на английском для фото обложки по теме.',
-    'Верни JSON.',
+    `Write a Telegram post (up to ${MAX_POST_LENGTH} characters) strictly following the channel style rules.`,
+    'Structure: catchy hook → body with value → call to action → 3–5 hashtags.',
+    'Also propose imageKeywords — a short English query for a cover photo on the topic.',
+    'Return JSON.',
   ].join('\n');
 
   return generateJson<DraftPost>(prompt, schema, { system: CHANNEL_STYLE, temperature: 0.9 });
 }
 
-/** Доработать пост по замечаниям judge (один повтор внутри цепочки). */
+/** Improve the post based on the judge's notes (one retry inside the chain). */
 export async function improvePost(
   topic: string,
   facts: string,
@@ -44,37 +44,37 @@ export async function improvePost(
   suggestions: string,
 ): Promise<DraftPost> {
   const prompt = [
-    `Тема поста: "${topic}".`,
+    `Post topic: "${topic}".`,
     '',
-    'Факты из ресёрча:',
+    'Research facts:',
     facts,
     '',
-    'Черновик поста:',
+    'Draft post:',
     postText,
     '',
-    `Замечания рецензента: ${suggestions}`,
-    `Исправь пост с учётом замечаний, сохрани стиль канала и лимит ${MAX_POST_LENGTH} символов.`,
-    'Обнови imageKeywords при необходимости. Верни JSON.',
+    `Reviewer notes: ${suggestions}`,
+    `Fix the post per the notes, keep the channel style and the ${MAX_POST_LENGTH}-character limit.`,
+    'Update imageKeywords if needed. Return JSON.',
   ].join('\n');
 
   return generateJson<DraftPost>(prompt, schema, { system: CHANNEL_STYLE, temperature: 0.85 });
 }
 
-/** Переписать последний пост по инструкции-правке пользователя (Memory + итерация). */
+/** Rewrite the last post per the user's edit instruction (Memory + iteration). */
 export async function revisePost(memory: MemoryState, instruction: string): Promise<DraftPost> {
   const prompt = [
-    `Тема: "${memory.topic}".`,
+    `Topic: "${memory.topic}".`,
     '',
-    'Текущий пост:',
+    'Current post:',
     memory.postText,
     '',
-    'Факты из ресёрча (можно использовать):',
+    'Research facts (you may use them):',
     memory.facts,
     '',
-    `Правка от пользователя: "${instruction}".`,
-    `Перепиши пост с учётом правки, сохрани стиль канала и лимит ${MAX_POST_LENGTH} символов.`,
-    'Обнови imageKeywords, только если правка меняет тему картинки; иначе оставь прежний смысл.',
-    'Верни JSON.',
+    `User edit: "${instruction}".`,
+    `Rewrite the post per the edit, keep the channel style and the ${MAX_POST_LENGTH}-character limit.`,
+    'Only update imageKeywords if the edit changes the image subject; otherwise keep it.',
+    'Return JSON.',
   ].join('\n');
 
   return generateJson<DraftPost>(prompt, schema, { system: CHANNEL_STYLE, temperature: 0.85 });

@@ -1,14 +1,14 @@
-// Upstash Redis: лимит постов (Rate limiting) и память последнего поста (Memory).
+// Upstash Redis: post limit (rate limiting) and last-post memory.
 import { Redis } from '@upstash/redis';
 import type { MemoryState } from './types.js';
 
 let redis: Redis | null = null;
 
 /**
- * Ищет REST-креды Upstash в переменных окружения.
- * Сначала пробует канонические UPSTASH_REDIS_REST_URL/TOKEN, а если их нет —
- * находит по суффиксу имени (Vercel Marketplace создаёт их с префиксом,
- * например STORAGE_KV_REST_API_URL / KV_REST_API_TOKEN).
+ * Finds the Upstash REST credentials in the environment.
+ * Prefers the canonical UPSTASH_REDIS_REST_URL/TOKEN; if absent, matches by name
+ * suffix (the Vercel Marketplace creates them with a prefix, e.g.
+ * STORAGE_KV_REST_API_URL / KV_REST_API_TOKEN).
  */
 function resolveRedisCreds(): { url: string; token: string } {
   const env = process.env;
@@ -31,8 +31,8 @@ function resolveRedisCreds(): { url: string; token: string } {
   if (url && token) return { url, token };
 
   throw new Error(
-    'Не найдены переменные Upstash Redis (URL/TOKEN). ' +
-      'Проверь, что база подключена в Vercel → Storage, и сделай Redeploy.',
+    'Upstash Redis variables (URL/TOKEN) not found. ' +
+      'Make sure the database is connected in Vercel → Storage, then Redeploy.',
   );
 }
 
@@ -46,30 +46,30 @@ function db(): Redis {
 const countKey = (userId: number) => `count:${userId}`;
 const postKey = (userId: number) => `post:${userId}`;
 
-// Память последнего поста живёт 7 дней.
+// Last-post memory lives for 7 days.
 const MEMORY_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-/** Сколько постов пользователь уже сгенерировал. */
+/** How many posts the user has generated so far. */
 export async function getPostCount(userId: number): Promise<number> {
   const value = await db().get<number>(countKey(userId));
   return value ?? 0;
 }
 
-/** Увеличить счётчик постов (вызывается только для НОВОЙ темы, не для правки). */
+/** Increment the post counter (called only for a NEW topic, not for an edit). */
 export async function incrementPostCount(userId: number): Promise<number> {
   return db().incr(countKey(userId));
 }
 
-/** Сохранить последний пост пользователя для последующих правок. */
+/** Save the user's last post for later edits. */
 export async function saveMemory(userId: number, state: MemoryState): Promise<void> {
   await db().set(postKey(userId), JSON.stringify(state), { ex: MEMORY_TTL_SECONDS });
 }
 
-/** Достать последний пост пользователя (или null). */
+/** Get the user's last post (or null). */
 export async function getMemory(userId: number): Promise<MemoryState | null> {
   const value = await db().get<MemoryState | string>(postKey(userId));
   if (!value) return null;
-  // Upstash может вернуть уже распарсенный объект или строку — обрабатываем оба случая.
+  // Upstash may return an already-parsed object or a string — handle both.
   if (typeof value === 'string') {
     try {
       return JSON.parse(value) as MemoryState;

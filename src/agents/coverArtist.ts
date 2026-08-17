@@ -1,4 +1,4 @@
-// Агент-художник обложки: подбирает готовое фото на Pexels по ключевым словам (без генерации).
+// Cover artist agent: picks a ready-made Pexels photo by keywords (no generation).
 import { requireEnv } from '../config.js';
 import type { Cover } from '../types.js';
 
@@ -13,8 +13,8 @@ interface PexelsSearchResponse {
 }
 
 /**
- * Ищет landscape-фото по ключевым словам. Из результатов берёт случайное фото
- * из первых нескольких, чтобы обложки не повторялись. Возвращает null, если ничего нет.
+ * Searches for a landscape photo by keywords. Picks a random photo from the first
+ * few results so covers don't repeat. Returns null if nothing is found.
  */
 export async function findCover(keywords: string): Promise<Cover | null> {
   const query = keywords.trim() || 'fitness workout';

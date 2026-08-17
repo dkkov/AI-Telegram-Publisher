@@ -1,6 +1,6 @@
-// Общие типы проекта.
+// Shared project types.
 
-/** Входящий апдейт Telegram (нам нужны только личные текстовые сообщения). */
+/** Incoming Telegram update (we only need private text messages). */
 export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
@@ -25,28 +25,28 @@ export interface TelegramChat {
   type: 'private' | 'group' | 'supergroup' | 'channel';
 }
 
-/** Результат работы ресёрчера. */
+/** Result of the researcher agent. */
 export interface ResearchResult {
   facts: string;
   sources: string[];
 }
 
-/** Готовый пост от копирайтера. */
+/** A finished post from the copywriter. */
 export interface DraftPost {
-  /** Текст поста целиком (хук + тело + призыв + хэштеги). */
+  /** The full post text (hook + body + CTA + hashtags). */
   text: string;
-  /** Ключевые слова (EN) для поиска обложки. */
+  /** English keywords for the cover photo search. */
   imageKeywords: string;
 }
 
-/** Обложка, подобранная на Pexels. */
+/** A cover photo picked from Pexels. */
 export interface Cover {
   imageUrl: string;
   photographer: string;
   pexelsUrl: string;
 }
 
-/** Вердикт judge о качестве поста. */
+/** The judge's verdict on post quality. */
 export interface JudgeVerdict {
   approved: boolean;
   score: number; // 1..10
@@ -54,13 +54,13 @@ export interface JudgeVerdict {
   suggestions: string;
 }
 
-/** Вердикт модератора по входящей теме. */
+/** The moderator's verdict on the incoming topic. */
 export interface ModerationVerdict {
   allowed: boolean;
   reason: string;
 }
 
-/** Память последнего поста пользователя (для правок). */
+/** The user's last-post memory (for edits). */
 export interface MemoryState {
   topic: string;
   facts: string;
@@ -70,5 +70,5 @@ export interface MemoryState {
   updatedAt: number;
 }
 
-/** Классификация входящего сообщения. */
+/** Classification of an incoming message. */
 export type MessageIntent = 'new_topic' | 'edit';

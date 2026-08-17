@@ -1,4 +1,4 @@
-// Агент-judge: самопроверка поста перед отправкой (стиль, структура, факты, безопасность).
+// Judge agent: self-check of the post before sending (style, structure, facts, safety).
 import { Type, type Schema } from '@google/genai';
 import { generateJson } from '../gemini.js';
 import { CHANNEL_STYLE, MAX_POST_LENGTH } from '../config.js';
@@ -16,19 +16,19 @@ const schema: Schema = {
 };
 
 /**
- * Оценивает пост по правилам канала. approved=true, если пост готов к отправке.
- * suggestions — что улучшить (передаём копирайтеру для одного повтора, если approved=false).
+ * Scores the post against the channel rules. approved=true means it's ready to send.
+ * suggestions — what to improve (passed to the copywriter for one retry if approved=false).
  */
 export async function judgePost(topic: string, postText: string): Promise<JudgeVerdict> {
   const prompt = [
-    `Проверь пост для фитнес-канала по теме "${topic}". Верни JSON.`,
-    'Критерии: соответствие стилю канала, наличие структуры (хук/тело/призыв/хэштеги),',
-    `длина до ${MAX_POST_LENGTH} символов, отсутствие выдуманных цифр и опасных советов,`,
-    'наличие дисклеймера при теме про здоровье/нагрузки.',
-    'score — 1..10. approved=true, если score >= 7 и нет критичных проблем.',
-    'issues — список проблем. suggestions — как переписать (кратко, по-русски).',
+    `Review a fitness channel post on the topic "${topic}". Return JSON.`,
+    'Criteria: fits the channel style, has the structure (hook/body/CTA/hashtags),',
+    `length up to ${MAX_POST_LENGTH} characters, no invented numbers or dangerous advice,`,
+    'includes a disclaimer when the topic touches health/training load.',
+    'score is 1..10. approved=true if score >= 7 and there are no critical issues.',
+    'issues — a list of problems. suggestions — how to rewrite it (brief, in English).',
     '',
-    'Пост:',
+    'Post:',
     postText,
   ].join('\n');
 
@@ -36,7 +36,7 @@ export async function judgePost(topic: string, postText: string): Promise<JudgeV
     return await generateJson<JudgeVerdict>(prompt, schema, { system: CHANNEL_STYLE });
   } catch (err) {
     console.error('judgePost failed:', err);
-    // Если judge не сработал — не блокируем отправку, считаем пост принятым.
+    // If the judge fails, don't block sending — treat the post as approved.
     return { approved: true, score: 7, issues: [], suggestions: '' };
   }
 }

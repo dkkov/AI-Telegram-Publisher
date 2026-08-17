@@ -1,98 +1,104 @@
 # 💪 AI Telegram Fitness Bot
 
-Telegram-бот, которому пишешь тему — а он сам ресёрчит её живым поиском и присылает
-готовый пост (текст + фото-обложка) в фирменном стиле фитнес-канала.
+A Telegram bot that turns a topic into a ready-to-publish post. Send it a topic and it
+researches fresh facts, writes a caption in a consistent fitness-channel voice, and attaches
+a matching cover photo.
 
-Внутри — система суб-агентов под управлением оркестратора:
+Under the hood it's a small system of sub-agents driven by an orchestrator:
 
-| Агент | Файл | Паттерн |
+| Agent | File | Pattern |
 |-------|------|---------|
-| Оркестратор | `src/orchestrator.ts` | Orchestrator / Router |
-| Модератор темы | `src/agents/moderator.ts` | Moderation / Guardrails |
-| Ресёрчер | `src/agents/researcher.ts` | Research + Tool Calling (Google Search grounding) |
-| Копирайтер | `src/agents/copywriter.ts` | Copywriter + Memory (правки) |
-| Художник обложки | `src/agents/coverArtist.ts` | Готовое фото со стока (Pexels) |
+| Orchestrator | `src/orchestrator.ts` | Orchestrator / Router |
+| Topic moderator | `src/agents/moderator.ts` | Moderation / Guardrails |
+| Researcher | `src/agents/researcher.ts` | Research + Tool Calling (Google Search grounding) |
+| Copywriter | `src/agents/copywriter.ts` | Copywriter + Memory (edits) |
+| Cover artist | `src/agents/coverArtist.ts` | Ready-made stock photo (Pexels) |
 | Judge | `src/agents/judge.ts` | Self-check |
-| Лимит постов | `src/redis.ts` | Rate limiting (Upstash Redis) |
+| Post limit | `src/redis.ts` | Rate limiting (Upstash Redis) |
 
-**Стек:** Node.js + TypeScript, Vercel (serverless webhook), Gemini API, Pexels, Upstash Redis.
-
----
-
-## ⚠️ Разделение ролей
-
-- **Ассистент (Claude/AI):** только пишет код и деплоит.
-- **Ты сам:** заливаешь переменные окружения, регистрируешь webhook и проводишь **все**
-  тесты в Telegram. Ассистент бота не запускает и Telegram API не дёргает.
+**Stack:** Node.js + TypeScript, Vercel (serverless webhook), Gemini API, Pexels, Upstash Redis.
 
 ---
 
-## 1. Ключи (у тебя уже есть)
+## Features
 
-- `TELEGRAM_BOT_TOKEN` — от [@BotFather](https://t.me/BotFather) (`/newbot`).
-- `TELEGRAM_WEBHOOK_SECRET` — придумай сам любую случайную строку.
+- Accepts a topic in a private chat and returns a finished post (text + cover photo).
+- Live web research via Gemini + Google Search grounding (falls back to the model's own
+  knowledge if the search quota is unavailable).
+- Post structure: hook → body with value → call to action → 3–5 hashtags.
+- Understands edits ("shorter", "add an example", "make it simpler") and rewrites the last post.
+- Moderates the incoming topic before generating.
+- Self-check with a Judge agent, with one automatic rewrite if the post falls short.
+- Free-tier limit of 2 posts per user via Upstash Redis, then a polite upgrade message.
+
+---
+
+## 1. Get your keys
+
+- `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather) (`/newbot`).
+- `TELEGRAM_WEBHOOK_SECRET` — any random string you make up.
 - `GEMINI_API_KEY` — [Google AI Studio](https://aistudio.google.com/apikey).
 - `PEXELS_API_KEY` — [Pexels API](https://www.pexels.com/api/).
-- `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` — Upstash (удобно поставить через
-  Vercel Marketplace: Storage → Upstash for Redis; переменные подставятся автоматически).
+- `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` — Upstash (easiest via the Vercel
+  Marketplace: Storage → Upstash for Redis; the variables are added automatically).
 
-Список всех переменных — в [`.env.example`](.env.example).
+All variables are listed in [`.env.example`](.env.example).
 
 ---
 
-## 2. Деплой на Vercel
+## 2. Deploy to Vercel
 
-1. Залей проект в Git (GitHub) и импортируй в Vercel, **или** поставь CLI: `npm i -g vercel`.
-2. Добавь все переменные окружения из `.env.example` в проект Vercel
-   (**Settings → Environment Variables**), для окружения **Production**.
-3. Задеплой:
+1. Push the project to GitHub and import it in Vercel, **or** install the CLI: `npm i -g vercel`.
+2. Add all variables from `.env.example` to the Vercel project
+   (**Settings → Environment Variables**) for the **Production** environment.
+3. Deploy:
 
    ```bash
    vercel --prod
    ```
 
-   После деплоя вебхук будет доступен по адресу:
-   `https://<твой-проект>.vercel.app/api/telegram`
+   The webhook will be available at:
+   `https://<your-project>.vercel.app/api/telegram`
 
-> Проверить, что функция жива, можно открыв этот URL в браузере — она ответит
+> Open that URL in a browser to check it's live — it responds with
 > `AI Telegram fitness bot is running.`
 
 ---
 
-## 3. Регистрация webhook (делаешь ты)
+## 3. Register the webhook
 
-Одной командой (подставь свой токен, домен и секрет):
+Run once (replace the token, domain and secret):
 
 ```bash
-curl "https://api.telegram.org/bot<ТОКЕН>/setWebhook?url=https://<твой-проект>.vercel.app/api/telegram&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-project>.vercel.app/api/telegram&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
 ```
 
-Проверить статус вебхука:
+Check the webhook status:
 
 ```bash
-curl "https://api.telegram.org/bot<ТОКЕН>/getWebhookInfo"
+curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
 ```
 
-Удалить вебхук (если понадобится):
+Remove the webhook if needed:
 
 ```bash
-curl "https://api.telegram.org/bot<ТОКЕН>/deleteWebhook"
+curl "https://api.telegram.org/bot<TOKEN>/deleteWebhook"
 ```
 
 ---
 
-## 4. Тест в Telegram (делаешь ты)
+## 4. Use it in Telegram
 
-1. Открой своего бота, напиши `/start`.
-2. Пришли тему, например: `как начать бегать с нуля`.
-   → бот пришлёт статусы и готовый пост с обложкой.
-3. Пришли правку: `короче` или `добавь пример` → бот перепишет пост.
-4. Сгенерируй ещё посты: на 3-м новом посте сработает лимит (`FREE_POST_LIMIT=2`).
-5. Пришли заведомо запретную тему → модератор вежливо откажет.
+1. Open your bot and send `/start`.
+2. Send a topic, e.g. `how to start running from scratch`.
+   → the bot streams status updates and returns a finished post with a cover photo.
+3. Send an edit: `shorter` or `add an example` → the bot rewrites the post.
+4. Generate more posts: the limit kicks in on the 3rd post (`FREE_POST_LIMIT=2`).
+5. Send an obviously unsafe topic → the moderator politely declines.
 
 ---
 
-## Локальная проверка сборки (без запуска бота)
+## Local build check (without running the bot)
 
 ```bash
 npm install
@@ -101,16 +107,26 @@ npm run typecheck
 
 ---
 
-## Как это работает (поток)
+## How it works (flow)
 
 ```
-Сообщение → webhook (ack 200, дальше в фоне через waitUntil)
-  → классификация: новая тема или правка?
-  Новая тема:
-    лимит (Redis) → модерация → ресёрч (grounding) → копирайтер
-      → judge (при провале 1 повтор) → обложка (Pexels) → +1 к счётчику
-      → сохранить в память → отправить пост
-  Правка:
-    взять пост из памяти → переписать → (при смене темы фото — новая обложка)
-      → обновить память → отправить (лимит не тратится)
+Message → webhook (ack 200, then background via waitUntil)
+  → classify: new topic or edit?
+  New topic:
+    limit (Redis) → moderation → research (grounding) → copywriter
+      → judge (one retry on failure) → cover (Pexels) → +1 to counter
+      → save to memory → send the post
+  Edit:
+    take the post from memory → rewrite → (new cover if the photo subject changed)
+      → update memory → send (does not consume the limit)
 ```
+
+---
+
+## Configuration
+
+- **Channel voice / style rules** live in `src/config.ts` (`CHANNEL_STYLE`). Edit them to
+  change tone, length, emojis, structure and forbidden topics — or to switch niches.
+- **Gemini model** is set via `GEMINI_MODEL` (default `gemini-flash-latest`). The wrapper
+  automatically falls back across current models and retries on temporary overload.
+- **Free limit** is set via `FREE_POST_LIMIT` (default `2`).
